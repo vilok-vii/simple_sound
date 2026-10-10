@@ -15,6 +15,8 @@ const FORMAT_NAMES := {
 	"mp2": "an MP2 file",
 	"aiff": "an AIFF file",
 }
+enum { PROJECT_OPEN, PROJECT_RENAME, PROJECT_EXPORT, PROJECT_FOLDER, PROJECT_DELETE, PROJECT_NEW, PROJECT_IMPORT }
+
 const MODIFIER_KEYS := [KEY_SHIFT, KEY_CTRL, KEY_ALT, KEY_META]
 
 var settings := {"master_volume": 1.0, "last_project": ""}
@@ -25,13 +27,19 @@ var binding_row: TrackRow = null
 var pending_mode := "sfx"
 
 var project_list: ItemList
-var project_name_edit: LineEdit
+var project_menu: PopupMenu
+var menu_project := ""
+var export_project := ""
+var delete_project := ""
+var name_dialog: ConfirmationDialog
+var name_dialog_edit: LineEdit
+var name_dialog_target := ""
 var project_title: Label
 var master_label: Label
 var workspace: VBoxContainer
 var no_project_label: Label
 var loop_box: VBoxContainer
-var sfx_box: VBoxContainer
+var sfx_box: HFlowContainer
 var status_label: Label
 var file_dialog: FileDialog
 var delete_dialog: ConfirmationDialog
@@ -97,9 +105,9 @@ func _on_bind_requested(row: TrackRow) -> void:
 func _finish_binding(key: InputEventKey) -> void:
 	var row := binding_row
 	binding_row = null
+	row.set_binding_mode(false)
 	match key.keycode:
 		KEY_ESCAPE:
-			row.set_binding_mode(false)
 			_set_status("Key binding cancelled.")
 		KEY_BACKSPACE, KEY_DELETE:
 			row.set_hotkey(0)
@@ -186,67 +194,114 @@ func _on_project_selected(index: int) -> void:
 		_open_project(project_name)
 
 
-func _on_new_project() -> void:
-	var project_name := _clean_name(project_name_edit.text)
-	if project_name == "":
-		_set_status("Type a name for the new project first.")
-		return
-	if DirAccess.dir_exists_absolute(_project_dir(project_name)):
-		_set_status("A project called \"%s\" already exists." % project_name)
-		return
+func _on_project_clicked(index: int, _at_position: Vector2, mouse_button: int) -> void:
+	if mouse_button == MOUSE_BUTTON_RIGHT:
+		_show_project_menu(project_list.get_item_text(index))
+
+
+func _on_project_list_empty_clicked(_at_position: Vector2, mouse_button: int) -> void:
+	if mouse_button == MOUSE_BUTTON_RIGHT:
+		_show_project_menu("")
+
+
+func _show_project_menu(project_name: String) -> void:
+	menu_project = project_name
+	project_menu.clear()
+	if project_name != "":
+		project_menu.add_item("Open", PROJECT_OPEN)
+		project_menu.set_item_disabled(-1, project_name == current_project)
+		project_menu.add_item("Rename...", PROJECT_RENAME)
+		project_menu.add_item("Export...", PROJECT_EXPORT)
+		project_menu.add_item("Open folder", PROJECT_FOLDER)
+		project_menu.add_separator()
+		project_menu.add_item("Delete...", PROJECT_DELETE)
+		project_menu.add_separator()
+	project_menu.add_item("New project...", PROJECT_NEW)
+	project_menu.add_item("Import...", PROJECT_IMPORT)
+	var at := project_list.get_screen_position() + project_list.get_local_mouse_position()
+	project_menu.popup(Rect2i(Vector2i(at), Vector2i.ZERO))
+
+
+func _on_project_menu_pressed(id: int) -> void:
+	match id:
+		PROJECT_OPEN:
+			_open_project(menu_project)
+		PROJECT_RENAME:
+			_show_name_dialog(menu_project)
+		PROJECT_EXPORT:
+			_on_export_project(menu_project)
+		PROJECT_FOLDER:
+			OS.shell_open(ProjectSettings.globalize_path(_project_dir(menu_project)))
+		PROJECT_DELETE:
+			delete_project = menu_project
+			delete_dialog.dialog_text = "Delete project \"%s\" and all its sound copies?\nThis cannot be undone." % menu_project
+			delete_dialog.popup_centered()
+		PROJECT_NEW:
+			_show_name_dialog("")
+		PROJECT_IMPORT:
+			import_dialog.popup_centered_ratio(0.7)
+
+
+## Asks for a project name. An empty target creates a new project,
+## otherwise the target project is renamed.
+func _show_name_dialog(target: String) -> void:
+	name_dialog_target = target
+	name_dialog.title = "Rename project" if target != "" else "New project"
+	name_dialog.ok_button_text = "Rename" if target != "" else "Create"
+	name_dialog_edit.text = target
+	name_dialog.popup_centered(Vector2i(380, 0))
+	name_dialog_edit.grab_focus()
+	name_dialog_edit.select_all()
+
+
+func _on_name_dialog_confirmed() -> void:
+	var new_name := _clean_name(name_dialog_edit.text)
+	if new_name == "":
+		_set_status("A project needs a name.")
+	elif new_name == name_dialog_target:
+		pass
+	elif DirAccess.dir_exists_absolute(_project_dir(new_name)):
+		_set_status("A project called \"%s\" already exists." % new_name)
+	elif name_dialog_target == "":
+		_create_project(new_name)
+	else:
+		_rename_project(name_dialog_target, new_name)
+
+
+func _create_project(project_name: String) -> void:
 	DirAccess.make_dir_recursive_absolute(_project_dir(project_name))
 	_write_json(_project_dir(project_name).path_join(PROJECT_FILE), {"tracks": []})
-	project_name_edit.clear()
-	project_name_edit.release_focus()
 	_open_project(project_name)
 
 
-func _on_rename_project() -> void:
-	if current_project == "":
-		_set_status("Select a project to rename.")
-		return
-	var new_name := _clean_name(project_name_edit.text)
-	if new_name == "":
-		_set_status("Type the new name in the box, then press Rename.")
-		return
-	if DirAccess.dir_exists_absolute(_project_dir(new_name)):
-		_set_status("A project called \"%s\" already exists." % new_name)
-		return
-	var err := DirAccess.rename_absolute(_project_dir(), _project_dir(new_name))
+func _rename_project(old_name: String, new_name: String) -> void:
+	var err := DirAccess.rename_absolute(_project_dir(old_name), _project_dir(new_name))
 	if err != OK:
 		_set_status("Could not rename the project (error %d)." % err)
 		return
-	_set_status("Renamed \"%s\" to \"%s\"." % [current_project, new_name])
-	current_project = new_name
-	settings.last_project = new_name
-	_save_settings()
-	project_name_edit.clear()
-	project_name_edit.release_focus()
+	if old_name == current_project:
+		current_project = new_name
+		settings.last_project = new_name
+		_save_settings()
 	_refresh_project_list()
 	_update_workspace_visibility()
-
-
-func _on_delete_project() -> void:
-	if current_project == "":
-		_set_status("Select a project to delete.")
-		return
-	delete_dialog.dialog_text = "Delete project \"%s\" and all its sound copies?\nThis cannot be undone." % current_project
-	delete_dialog.popup_centered()
+	_set_status("Renamed \"%s\" to \"%s\"." % [old_name, new_name])
 
 
 func _on_delete_confirmed() -> void:
-	var deleted := current_project
-	_close_project()
+	var deleted := delete_project
+	delete_project = ""
+	if deleted == "" or not DirAccess.dir_exists_absolute(_project_dir(deleted)):
+		return
+	if deleted == current_project:
+		_close_project()
 	_remove_dir_recursive(_project_dir(deleted))
-	var names := _get_project_names()
-	if not names.is_empty():
-		_open_project(names[0])
+	if current_project == "":
+		var names := _get_project_names()
+		if not names.is_empty():
+			_open_project(names[0])
+	_refresh_project_list()
 	_set_status("Deleted project \"%s\"." % deleted)
-
-
-func _on_open_folder() -> void:
-	var path := _project_dir() if current_project != "" else PROJECTS_DIR
-	OS.shell_open(ProjectSettings.globalize_path(path))
 
 
 # --- Sounds -------------------------------------------------------------------
@@ -427,37 +482,36 @@ static func _load_stream(path: String, loop: bool) -> AudioStream:
 
 # --- Export / import ----------------------------------------------------------
 
-func _on_export_project() -> void:
-	if current_project == "":
-		_set_status("Select a project to export.")
-		return
-	export_dialog.current_file = current_project + ".zip"
+func _on_export_project(project_name: String) -> void:
+	export_project = project_name
+	export_dialog.current_file = project_name + ".zip"
 	export_dialog.popup_centered_ratio(0.7)
 
 
 func _on_export_path_selected(path: String) -> void:
 	if path.get_extension().to_lower() != "zip":
 		path += ".zip"
+	if export_project == "" or not DirAccess.dir_exists_absolute(_project_dir(export_project)):
+		return
+	var dir := _project_dir(export_project)
+	var data: Variant = _read_json(dir.path_join(PROJECT_FILE))
+	var project_tracks: Array = data.get("tracks", []) if data is Dictionary else []
 	var zip := ZIPPacker.new()
 	var err := zip.open(path)
 	if err != OK:
 		_set_status("Could not create \"%s\" (error %d)." % [path.get_file(), err])
 		return
 	var files := [PROJECT_FILE]
-	for track in tracks:
+	for track in project_tracks:
 		var file_name := str(track.get("file", ""))
-		if file_name != "" and FileAccess.file_exists(_project_dir().path_join(file_name)):
+		if file_name != "" and FileAccess.file_exists(dir.path_join(file_name)):
 			files.append(file_name)
 	for file_name in files:
 		zip.start_file(file_name)
-		zip.write_file(FileAccess.get_file_as_bytes(_project_dir().path_join(file_name)))
+		zip.write_file(FileAccess.get_file_as_bytes(dir.path_join(file_name)))
 		zip.close_file()
 	zip.close()
-	_set_status("Exported \"%s\" with %d sound(s) to %s" % [current_project, files.size() - 1, path])
-
-
-func _on_import_project() -> void:
-	import_dialog.popup_centered_ratio(0.7)
+	_set_status("Exported \"%s\" with %d sound(s) to %s" % [export_project, files.size() - 1, path])
 
 
 func _on_import_path_selected(path: String) -> void:
@@ -577,26 +631,19 @@ func _build_ui() -> void:
 	project_list.size_flags_vertical = SIZE_EXPAND_FILL
 	project_list.focus_mode = FOCUS_NONE
 	project_list.item_selected.connect(_on_project_selected)
+	project_list.item_clicked.connect(_on_project_clicked)
+	project_list.empty_clicked.connect(_on_project_list_empty_clicked)
+	project_list.item_activated.connect(func(index: int) -> void: _show_name_dialog(project_list.get_item_text(index)))
 	sidebar.add_child(project_list)
 
-	project_name_edit = LineEdit.new()
-	project_name_edit.placeholder_text = "Project name"
-	project_name_edit.text_submitted.connect(func(_text: String) -> void: _on_new_project())
-	sidebar.add_child(project_name_edit)
+	var hint := _make_label("Right-click for options.\nDouble-click a project to rename it.", 14)
+	hint.modulate = Color(1, 1, 1, 0.6)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	sidebar.add_child(hint)
 
-	var project_buttons := HBoxContainer.new()
-	sidebar.add_child(project_buttons)
-	for entry in [["New", _on_new_project], ["Rename", _on_rename_project], ["Delete", _on_delete_project]]:
-		var button := _make_button(entry[0], entry[1])
-		button.size_flags_horizontal = SIZE_EXPAND_FILL
-		project_buttons.add_child(button)
-	var share_buttons := HBoxContainer.new()
-	sidebar.add_child(share_buttons)
-	for entry in [["Export...", _on_export_project], ["Import...", _on_import_project]]:
-		var button := _make_button(entry[0], entry[1])
-		button.size_flags_horizontal = SIZE_EXPAND_FILL
-		share_buttons.add_child(button)
-	sidebar.add_child(_make_button("Open folder", _on_open_folder))
+	project_menu = PopupMenu.new()
+	project_menu.id_pressed.connect(_on_project_menu_pressed)
+	add_child(project_menu)
 
 	# Main area.
 	var main := VBoxContainer.new()
@@ -628,7 +675,7 @@ func _build_ui() -> void:
 	master_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	top.add_child(master_label)
 
-	no_project_label = _make_label("Create a project on the left to get started.", 20)
+	no_project_label = _make_label("Right-click the project list to create a project.", 20)
 	no_project_label.size_flags_vertical = SIZE_EXPAND_FILL
 	no_project_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	no_project_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -651,8 +698,13 @@ func _build_ui() -> void:
 	columns.size_flags_vertical = SIZE_EXPAND_FILL
 	columns.add_theme_constant_override("separation", 16)
 	workspace.add_child(columns)
-	loop_box = _make_column(columns, "Loops")
-	sfx_box = _make_column(columns, "Sound effects")
+	loop_box = VBoxContainer.new()
+	loop_box.add_theme_constant_override("separation", 8)
+	_make_column(columns, "Loops", loop_box, 1.0)
+	sfx_box = HFlowContainer.new()
+	sfx_box.add_theme_constant_override("h_separation", 10)
+	sfx_box.add_theme_constant_override("v_separation", 10)
+	_make_column(columns, "Sound effects", sfx_box, 1.6)
 
 	status_label = _make_label("", 16)
 	status_label.modulate = Color(1, 1, 1, 0.75)
@@ -674,6 +726,14 @@ func _build_ui() -> void:
 	delete_dialog.confirmed.connect(_on_delete_confirmed)
 	add_child(delete_dialog)
 
+	name_dialog = ConfirmationDialog.new()
+	name_dialog_edit = LineEdit.new()
+	name_dialog_edit.placeholder_text = "Project name"
+	name_dialog.add_child(name_dialog_edit)
+	name_dialog.register_text_enter(name_dialog_edit)
+	name_dialog.confirmed.connect(_on_name_dialog_confirmed)
+	add_child(name_dialog)
+
 	export_dialog = FileDialog.new()
 	export_dialog.title = "Export project"
 	export_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
@@ -693,9 +753,10 @@ func _build_ui() -> void:
 	add_child(import_dialog)
 
 
-func _make_column(parent: Control, title: String) -> VBoxContainer:
+func _make_column(parent: Control, title: String, list: Container, stretch: float) -> void:
 	var column := VBoxContainer.new()
 	column.size_flags_horizontal = SIZE_EXPAND_FILL
+	column.size_flags_stretch_ratio = stretch
 	parent.add_child(column)
 	column.add_child(_make_label(title, 20))
 
@@ -704,11 +765,8 @@ func _make_column(parent: Control, title: String) -> VBoxContainer:
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	column.add_child(scroll)
 
-	var list := VBoxContainer.new()
 	list.size_flags_horizontal = SIZE_EXPAND_FILL
-	list.add_theme_constant_override("separation", 8)
 	scroll.add_child(list)
-	return list
 
 
 func _make_label(text: String, font_size: int = 18) -> Label:

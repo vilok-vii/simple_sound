@@ -5,18 +5,25 @@ just a laptop and a speaker.
 
 ## Features
 
-- **Projects**: each show gets its own project (a folder). Create, rename and
-  delete them in the left sidebar. The last opened project reopens on start.
+Most options are in **right-click menus**, and you can **double-click a name**
+to rename it (Enter saves, Esc cancels).
+
+- **Projects**: each show gets its own project (a folder) in the left sidebar.
+  Right-click a project to open, rename, export, open its folder or delete it.
+  Right-click the empty part of the list to create or import a project. The last
+  opened project reopens on start.
 - **Loops**: background sounds that play on repeat as long as they are in the
-  workspace. Each has its own volume slider. Remove it to stop it.
-- **SFX**: one-shot sounds with Play/Stop buttons, a volume slider, a progress
-  bar and an optional **hotkey**. Click "Set key", then press any key
-  (modifiers like Ctrl/Shift work too). Esc cancels, Backspace clears the key.
-- **Rename sounds**: click "Rename" (or double-click a sound's name), type the
-  new name and press Enter. Esc cancels. The copied file is renamed to match.
-- **Export / import**: "Export..." saves the current project (settings and all
-  its sounds) as one `.zip` file. Copy it to another computer running Simple
-  Sound and use "Import..." to load it as a project there.
+  workspace. Each has its own volume slider. Right-click to rename or remove.
+- **SFX**: each sound effect is a tile with a big play button and its name
+  below. Click to play once; a progress bar shows how far it is. Right-click
+  for Play, Stop, Set/Clear hotkey, Volume, Rename and Remove. For a hotkey,
+  choose "Set hotkey...", then press any key (modifiers like Ctrl/Shift work
+  too). Esc cancels, Backspace clears the key. The key shows in the tile's
+  corner.
+- **Renaming** a sound also renames its copied file to match.
+- **Export / import**: "Export..." saves a project (settings and all its
+  sounds) as one `.zip` file. Copy it to another computer running Simple Sound
+  and use "Import..." to load it as a project there.
 - **Master volume** slider for the whole app.
 - **Stop all SFX**: press **Esc** (or the button) to stop every sound effect.
   Loops keep playing.
@@ -38,7 +45,7 @@ Projects live in the app's user folder under `projects/`:
 - macOS: `~/Library/Application Support/SimpleSound/projects`
 - Linux: `~/.local/share/SimpleSound/projects`
 
-The "Open folder" button opens the current project's folder.
+Right-click a project and choose "Open folder" to open it.
 
 ## Running and exporting
 

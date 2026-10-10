@@ -20,8 +20,12 @@ just a laptop and a speaker.
 - **Master volume** slider for the whole app.
 - **Stop all SFX**: press **Esc** (or the button) to stop every sound effect.
   Loops keep playing.
-- Supports **WAV, OGG and MP3**. You can add files with the buttons, or drag
-  them onto the window (left half = loop, right half = SFX).
+- Supports **WAV, OGG (Vorbis) and MP3**. The app checks what is inside a file,
+  not just its extension: files that are really M4A/AAC, Opus, FLAC or similar
+  (common for "YouTube to MP3" downloads) are refused with a message explaining
+  why. Convert them to MP3, WAV or OGG, for example with Audacity.
+- Add files with the buttons, or drag them onto the window (left half = loop,
+  right half = SFX).
 
 Sound files are **copied** into the project folder, so the show keeps working
 even if the originals get moved or deleted. All settings save automatically.

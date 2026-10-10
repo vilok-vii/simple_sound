@@ -28,6 +28,7 @@ var pending_mode := "sfx"
 
 var project_list: ItemList
 var project_menu: PopupMenu
+var projects_menu_button: Button
 var menu_project := ""
 var export_project := ""
 var delete_project := ""
@@ -40,7 +41,7 @@ var workspace: VBoxContainer
 var no_project_label: Label
 var loop_box: VBoxContainer
 var sfx_box: HFlowContainer
-var status_label: Label
+var error_dialog: AcceptDialog
 var file_dialog: FileDialog
 var delete_dialog: ConfirmationDialog
 var export_dialog: FileDialog
@@ -99,7 +100,6 @@ func _on_bind_requested(row: TrackRow) -> void:
 		binding_row.set_binding_mode(false)
 	binding_row = row
 	row.set_binding_mode(true)
-	_set_status("Press a key for \"%s\". Esc cancels, Backspace clears the key." % row.data.name)
 
 
 func _finish_binding(key: InputEventKey) -> void:
@@ -108,10 +108,9 @@ func _finish_binding(key: InputEventKey) -> void:
 	row.set_binding_mode(false)
 	match key.keycode:
 		KEY_ESCAPE:
-			_set_status("Key binding cancelled.")
+			pass
 		KEY_BACKSPACE, KEY_DELETE:
 			row.set_hotkey(0)
-			_set_status("Key cleared for \"%s\"." % row.data.name)
 		_:
 			var code := key.get_keycode_with_modifiers()
 			# A key triggers one sound only: take it away from any other SFX.
@@ -119,7 +118,6 @@ func _finish_binding(key: InputEventKey) -> void:
 				if other != row and other.get_hotkey() == code:
 					other.set_hotkey(0)
 			row.set_hotkey(code)
-			_set_status("\"%s\" is now on key %s." % [row.data.name, OS.get_keycode_string(code)])
 
 
 func _stop_all_sfx() -> void:
@@ -159,7 +157,6 @@ func _open_project(project_name: String) -> void:
 	_save_settings()
 	_refresh_project_list()
 	_update_workspace_visibility()
-	_set_status("Opened project \"%s\"." % project_name)
 
 
 func _close_project() -> void:
@@ -204,7 +201,7 @@ func _on_project_list_empty_clicked(_at_position: Vector2, mouse_button: int) ->
 		_show_project_menu("")
 
 
-func _show_project_menu(project_name: String) -> void:
+func _show_project_menu(project_name: String, from_button := false) -> void:
 	menu_project = project_name
 	project_menu.clear()
 	if project_name != "":
@@ -219,6 +216,8 @@ func _show_project_menu(project_name: String) -> void:
 	project_menu.add_item("New project...", PROJECT_NEW)
 	project_menu.add_item("Import...", PROJECT_IMPORT)
 	var at := project_list.get_screen_position() + project_list.get_local_mouse_position()
+	if from_button:
+		at = projects_menu_button.get_screen_position() + Vector2(0, projects_menu_button.size.y)
 	project_menu.popup(Rect2i(Vector2i(at), Vector2i.ZERO))
 
 
@@ -257,11 +256,11 @@ func _show_name_dialog(target: String) -> void:
 func _on_name_dialog_confirmed() -> void:
 	var new_name := _clean_name(name_dialog_edit.text)
 	if new_name == "":
-		_set_status("A project needs a name.")
+		_show_error("A project needs a name.")
 	elif new_name == name_dialog_target:
 		pass
 	elif DirAccess.dir_exists_absolute(_project_dir(new_name)):
-		_set_status("A project called \"%s\" already exists." % new_name)
+		_show_error("A project called \"%s\" already exists." % new_name)
 	elif name_dialog_target == "":
 		_create_project(new_name)
 	else:
@@ -277,7 +276,7 @@ func _create_project(project_name: String) -> void:
 func _rename_project(old_name: String, new_name: String) -> void:
 	var err := DirAccess.rename_absolute(_project_dir(old_name), _project_dir(new_name))
 	if err != OK:
-		_set_status("Could not rename the project (error %d)." % err)
+		_show_error("Could not rename the project (error %d)." % err)
 		return
 	if old_name == current_project:
 		current_project = new_name
@@ -285,7 +284,6 @@ func _rename_project(old_name: String, new_name: String) -> void:
 		_save_settings()
 	_refresh_project_list()
 	_update_workspace_visibility()
-	_set_status("Renamed \"%s\" to \"%s\"." % [old_name, new_name])
 
 
 func _on_delete_confirmed() -> void:
@@ -301,7 +299,6 @@ func _on_delete_confirmed() -> void:
 		if not names.is_empty():
 			_open_project(names[0])
 	_refresh_project_list()
-	_set_status("Deleted project \"%s\"." % deleted)
 
 
 # --- Sounds -------------------------------------------------------------------
@@ -324,7 +321,7 @@ func _on_files_dropped(paths: PackedStringArray) -> void:
 
 func _add_files(paths: PackedStringArray, mode: String) -> void:
 	if current_project == "":
-		_set_status("Create or select a project before adding sounds.")
+		_show_error("Create or select a project before adding sounds.")
 		return
 	var added := 0
 	var problems: Array[String] = []
@@ -355,8 +352,8 @@ func _add_files(paths: PackedStringArray, mode: String) -> void:
 		added += 1
 	if added > 0:
 		_save_project()
-		problems.push_front("Added %d %s." % [added, "loop(s)" if mode == "loop" else "sound effect(s)"])
-	_set_status("  ".join(problems))
+	if not problems.is_empty():
+		_show_error("\n\n".join(problems))
 
 
 func _unplayable_message(file_name: String, format: String) -> String:
@@ -423,6 +420,7 @@ func _create_row(track: Dictionary) -> void:
 	row.remove_requested.connect(_on_remove_track)
 	row.bind_requested.connect(_on_bind_requested)
 	row.rename_requested.connect(_on_rename_track)
+	row.move_requested.connect(_on_move_track)
 	rows.append(row)
 
 
@@ -435,7 +433,46 @@ func _on_remove_track(row: TrackRow) -> void:
 	DirAccess.remove_absolute(_project_dir().path_join(str(row.data.get("file", ""))))
 	row.queue_free()
 	_save_project()
-	_set_status("Removed \"%s\"." % row.data.get("name", ""))
+
+
+func _on_move_track(row: TrackRow, target: TrackRow, after: bool) -> void:
+	if row == target or row.get_parent() != target.get_parent():
+		return
+	var list := row.get_parent()
+	var from := row.get_index()
+	var to := target.get_index() + (1 if after else 0)
+	if from < to:
+		to -= 1
+	if from == to:
+		return
+	list.move_child(row, to)
+	rows.clear()
+	for child in loop_box.get_children() + sfx_box.get_children():
+		if child is TrackRow and not child.is_queued_for_deletion():
+			rows.append(child)
+	tracks = rows.map(func(r: TrackRow) -> Dictionary: return r.data)
+	_save_project()
+
+
+## Drops in the gaps between sounds go next to the closest one.
+func _can_drop_in_list(_at_position: Vector2, drag: Variant, list: Container) -> bool:
+	return list.get_child_count() > 0 and list.get_child(0).can_accept_drag(drag)
+
+
+func _drop_in_list(_at_position: Vector2, drag: Variant, list: Container) -> void:
+	var mouse := list.get_global_mouse_position()
+	var closest: TrackRow = null
+	var best := INF
+	for child in list.get_children():
+		var dist := (child as Control).get_global_rect().get_center().distance_to(mouse)
+		if dist < best:
+			best = dist
+			closest = child
+	if closest == null:
+		return
+	var center := closest.get_global_rect().get_center()
+	var after := mouse.x > center.x if list == sfx_box else mouse.y > center.y
+	_on_move_track(drag.row, closest, after)
 
 
 func _on_rename_track(row: TrackRow, new_name: String) -> void:
@@ -448,11 +485,10 @@ func _on_rename_track(row: TrackRow, new_name: String) -> void:
 		if err == OK:
 			row.data["file"] = new_file
 		else:
-			_set_status("Renamed the sound, but could not rename its file (error %d)." % err)
+			_show_error("Renamed the sound, but could not rename its file (error %d)." % err)
 	row.data["name"] = new_name
 	row.update_name()
 	_save_project()
-	_set_status("Renamed sound to \"%s\"." % new_name)
 
 
 static func _load_stream(path: String, loop: bool) -> AudioStream:
@@ -499,7 +535,7 @@ func _on_export_path_selected(path: String) -> void:
 	var zip := ZIPPacker.new()
 	var err := zip.open(path)
 	if err != OK:
-		_set_status("Could not create \"%s\" (error %d)." % [path.get_file(), err])
+		_show_error("Could not create \"%s\" (error %d)." % [path.get_file(), err])
 		return
 	var files := [PROJECT_FILE]
 	for track in project_tracks:
@@ -511,18 +547,17 @@ func _on_export_path_selected(path: String) -> void:
 		zip.write_file(FileAccess.get_file_as_bytes(dir.path_join(file_name)))
 		zip.close_file()
 	zip.close()
-	_set_status("Exported \"%s\" with %d sound(s) to %s" % [export_project, files.size() - 1, path])
 
 
 func _on_import_path_selected(path: String) -> void:
 	var zip := ZIPReader.new()
 	if zip.open(path) != OK:
-		_set_status("Could not open \"%s\"." % path.get_file())
+		_show_error("Could not open \"%s\"." % path.get_file())
 		return
 	var entries := zip.get_files()
 	if not PROJECT_FILE in entries:
 		zip.close()
-		_set_status("\"%s\" is not a Simple Sound export (no %s inside)." % [path.get_file(), PROJECT_FILE])
+		_show_error("\"%s\" is not a Simple Sound export (no %s inside)." % [path.get_file(), PROJECT_FILE])
 		return
 
 	var base_name := _clean_name(path.get_file().get_basename())
@@ -545,7 +580,6 @@ func _on_import_path_selected(path: String) -> void:
 			file.store_buffer(zip.read_file(entry))
 	zip.close()
 	_open_project(project_name)
-	_set_status("Imported \"%s\"." % project_name)
 
 
 # --- Master volume & settings -------------------------------------------------
@@ -578,7 +612,7 @@ func _read_json(path: String) -> Variant:
 func _write_json(path: String, value: Variant) -> void:
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	if file == null:
-		_set_status("Could not save %s (error %d)." % [path, FileAccess.get_open_error()])
+		_show_error("Could not save %s (error %d)." % [path, FileAccess.get_open_error()])
 		return
 	file.store_string(JSON.stringify(value, "\t"))
 
@@ -591,8 +625,9 @@ func _remove_dir_recursive(path: String) -> void:
 	DirAccess.remove_absolute(path)
 
 
-func _set_status(text: String) -> void:
-	status_label.text = text
+func _show_error(text: String) -> void:
+	error_dialog.dialog_text = text
+	error_dialog.popup_centered(Vector2i(520, 0))
 
 
 func _update_workspace_visibility() -> void:
@@ -625,7 +660,15 @@ func _build_ui() -> void:
 	var sidebar := VBoxContainer.new()
 	sidebar.custom_minimum_size.x = 250
 	split.add_child(sidebar)
-	sidebar.add_child(_make_label("Projects", 22))
+	var sidebar_header := HBoxContainer.new()
+	sidebar.add_child(sidebar_header)
+	var projects_title := _make_label("Projects", 22)
+	projects_title.size_flags_horizontal = SIZE_EXPAND_FILL
+	sidebar_header.add_child(projects_title)
+	var projects_button := _make_button("...", func() -> void: _show_project_menu(current_project, true))
+	projects_button.flat = true
+	sidebar_header.add_child(projects_button)
+	projects_menu_button = projects_button
 
 	project_list = ItemList.new()
 	project_list.size_flags_vertical = SIZE_EXPAND_FILL
@@ -636,10 +679,6 @@ func _build_ui() -> void:
 	project_list.item_activated.connect(func(index: int) -> void: _show_name_dialog(project_list.get_item_text(index)))
 	sidebar.add_child(project_list)
 
-	var hint := _make_label("Right-click for options.\nDouble-click a project to rename it.", 14)
-	hint.modulate = Color(1, 1, 1, 0.6)
-	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	sidebar.add_child(hint)
 
 	project_menu = PopupMenu.new()
 	project_menu.id_pressed.connect(_on_project_menu_pressed)
@@ -675,7 +714,7 @@ func _build_ui() -> void:
 	master_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	top.add_child(master_label)
 
-	no_project_label = _make_label("Right-click the project list to create a project.", 20)
+	no_project_label = _make_label("Use the ... menu next to Projects to create a project.", 20)
 	no_project_label.size_flags_vertical = SIZE_EXPAND_FILL
 	no_project_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	no_project_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -705,11 +744,10 @@ func _build_ui() -> void:
 	sfx_box.add_theme_constant_override("h_separation", 10)
 	sfx_box.add_theme_constant_override("v_separation", 10)
 	_make_column(columns, "Sound effects", sfx_box, 1.6)
+	for list in [loop_box, sfx_box]:
+		list.set_drag_forwarding(Callable(),
+				_can_drop_in_list.bind(list), _drop_in_list.bind(list))
 
-	status_label = _make_label("", 16)
-	status_label.modulate = Color(1, 1, 1, 0.75)
-	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	main.add_child(status_label)
 
 	# Dialogs.
 	file_dialog = FileDialog.new()
@@ -725,6 +763,11 @@ func _build_ui() -> void:
 	delete_dialog.ok_button_text = "Delete"
 	delete_dialog.confirmed.connect(_on_delete_confirmed)
 	add_child(delete_dialog)
+
+	error_dialog = AcceptDialog.new()
+	error_dialog.title = "Simple Sound"
+	error_dialog.dialog_autowrap = true
+	add_child(error_dialog)
 
 	name_dialog = ConfirmationDialog.new()
 	name_dialog_edit = LineEdit.new()
@@ -766,6 +809,7 @@ func _make_column(parent: Control, title: String, list: Container, stretch: floa
 	column.add_child(scroll)
 
 	list.size_flags_horizontal = SIZE_EXPAND_FILL
+	list.size_flags_vertical = SIZE_EXPAND_FILL
 	scroll.add_child(list)
 
 

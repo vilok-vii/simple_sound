@@ -1,15 +1,22 @@
 class_name TrackRow
 extends PanelContainer
 ## One sound in the workspace. A loop is a row with a volume slider that plays
-## until removed. An SFX is a tile with a big play button that plays once.
-## Everything else is in the right-click menu; double-click a name to rename.
+## until removed. An SFX is a tile with a big play button that plays once;
+## pressing it again layers another copy on top. Other options are in the
+## "..." menu, names are renamed by double-clicking, and rows are reordered
+## by dragging them.
 
 signal changed
 signal remove_requested(row: TrackRow)
 signal bind_requested(row: TrackRow)
 signal rename_requested(row: TrackRow, new_name: String)
+signal move_requested(row: TrackRow, target: TrackRow, after: bool)
 
-enum { MENU_PLAY, MENU_STOP, MENU_SET_KEY, MENU_CLEAR_KEY, MENU_VOLUME, MENU_RENAME, MENU_REMOVE }
+enum { MENU_PLAY, MENU_STOP, MENU_SET_KEY, MENU_CLEAR_KEY, MENU_RENAME, MENU_REMOVE }
+
+const DRAG_TYPE := "simple_sound_track"
+## How many copies of one SFX can play on top of each other.
+const SFX_POLYPHONY := 16
 
 const LOOP_COLOR := Color(0.16, 0.22, 0.30)
 const SFX_COLOR := Color(0.20, 0.20, 0.24)
@@ -25,12 +32,12 @@ var player := AudioStreamPlayer.new()
 var _style := StyleBoxFlat.new()
 var _name_label: Label
 var _name_edit: LineEdit
-var _menu := PopupMenu.new()
+var _menu_button := MenuButton.new()
+var _menu: PopupMenu
 var _play_button: PlayButton
 var _progress: ProgressBar
 var _volume_slider: HSlider
 var _volume_label: Label
-var _volume_popup: PopupPanel
 var _binding := false
 
 
@@ -67,6 +74,8 @@ func setup(track: Dictionary, stream: AudioStream) -> void:
 	data = track
 	player.stream = stream
 	player.volume_db = volume_to_db(get_volume())
+	if is_sfx():
+		player.max_polyphony = SFX_POLYPHONY
 	add_child(player)
 	player.finished.connect(_update_playing_look)
 
@@ -84,7 +93,6 @@ func setup(track: Dictionary, stream: AudioStream) -> void:
 		_build_tile()
 	else:
 		_build_loop_row()
-	gui_input.connect(_on_gui_input)
 
 	if is_loop() and stream:
 		player.play()
@@ -117,27 +125,32 @@ func _build_volume_controls() -> void:
 	_volume_slider.size_flags_vertical = SIZE_SHRINK_CENTER
 	_volume_slider.focus_mode = Control.FOCUS_NONE
 	_volume_slider.value_changed.connect(_on_volume_changed)
-	_volume_slider.gui_input.connect(_on_gui_input)
+	_forward_drop(_volume_slider)
 
 	_volume_label = Label.new()
-	_volume_label.custom_minimum_size.x = 56
+	_volume_label.custom_minimum_size.x = 56 if is_loop() else 48
+	_volume_label.mouse_filter = Control.MOUSE_FILTER_PASS
 	_volume_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_update_volume_label()
 
 
 func _build_menu() -> void:
+	_menu_button.text = "..."
+	_menu_button.flat = true
+	_menu_button.focus_mode = Control.FOCUS_NONE
+	_forward_drop(_menu_button)
+	_menu = _menu_button.get_popup()
 	if is_sfx():
 		_menu.add_item("Play", MENU_PLAY)
 		_menu.add_item("Stop", MENU_STOP)
 		_menu.add_separator()
 		_menu.add_item("Set hotkey...", MENU_SET_KEY)
 		_menu.add_item("Clear hotkey", MENU_CLEAR_KEY)
-		_menu.add_item("Volume...", MENU_VOLUME)
 		_menu.add_separator()
 	_menu.add_item("Rename", MENU_RENAME)
 	_menu.add_item("Remove", MENU_REMOVE)
 	_menu.id_pressed.connect(_on_menu_pressed)
-	add_child(_menu)
+	_menu.about_to_popup.connect(_update_menu)
 
 
 func _build_loop_row() -> void:
@@ -156,6 +169,7 @@ func _build_loop_row() -> void:
 	looping.text = "Looping" if player.stream else ""
 	looping.add_theme_color_override("font_color", PLAYING_COLOR)
 	top.add_child(looping)
+	top.add_child(_menu_button)
 
 	var bottom := HBoxContainer.new()
 	box.add_child(bottom)
@@ -175,11 +189,14 @@ func _build_tile() -> void:
 	_play_button.custom_minimum_size = Vector2(TILE_WIDTH - 16, TILE_BUTTON_HEIGHT)
 	_play_button.focus_mode = Control.FOCUS_NONE
 	_play_button.disabled = player.stream == null
-	_play_button.tooltip_text = "Click to play. Right-click for options."
 	_play_button.pressed.connect(play)
-	_play_button.gui_input.connect(_on_gui_input)
+	_play_button.set_drag_forwarding(_get_drag_data, _can_drop_data, _drop_data)
 	box.add_child(_play_button)
 	_update_key_text()
+
+	# The "..." menu sits in the top-right corner of the play button.
+	_play_button.add_child(_menu_button)
+	_menu_button.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
 
 	_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -197,16 +214,10 @@ func _build_tile() -> void:
 	_progress.mouse_filter = Control.MOUSE_FILTER_PASS
 	box.add_child(_progress)
 
-	_volume_popup = PopupPanel.new()
-	var popup_box := HBoxContainer.new()
-	popup_box.custom_minimum_size.x = 280
-	var vol_title := Label.new()
-	vol_title.text = "Volume"
-	popup_box.add_child(vol_title)
-	popup_box.add_child(_volume_slider)
-	popup_box.add_child(_volume_label)
-	_volume_popup.add_child(popup_box)
-	add_child(_volume_popup)
+	var volume_box := HBoxContainer.new()
+	box.add_child(volume_box)
+	volume_box.add_child(_volume_slider)
+	volume_box.add_child(_volume_label)
 
 
 func _process(_delta: float) -> void:
@@ -280,11 +291,10 @@ func _finish_rename(accept: bool) -> void:
 		rename_requested.emit(self, new_name)
 
 
-func _show_menu() -> void:
+func _update_menu() -> void:
 	if is_sfx():
 		_menu.set_item_disabled(_menu.get_item_index(MENU_PLAY), player.stream == null)
 		_menu.set_item_disabled(_menu.get_item_index(MENU_CLEAR_KEY), get_hotkey() == 0)
-	_menu.popup(Rect2i(Vector2i(get_screen_position() + get_local_mouse_position()), Vector2i.ZERO))
 
 
 func _on_menu_pressed(id: int) -> void:
@@ -297,18 +307,51 @@ func _on_menu_pressed(id: int) -> void:
 			bind_requested.emit(self)
 		MENU_CLEAR_KEY:
 			set_hotkey(0)
-		MENU_VOLUME:
-			_volume_popup.popup(Rect2i(Vector2i(get_screen_position() + get_local_mouse_position()), Vector2i.ZERO))
 		MENU_RENAME:
 			start_rename()
 		MENU_REMOVE:
 			remove_requested.emit(self)
 
 
-func _on_gui_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
-		_show_menu()
-		get_viewport().set_input_as_handled()
+# --- Drag and drop to reorder ---------------------------------------------------
+
+func _get_drag_data(_at_position: Vector2) -> Variant:
+	if _name_edit.visible:
+		return null
+	var preview := PanelContainer.new()
+	preview.add_theme_stylebox_override("panel", _style)
+	var label := Label.new()
+	label.text = str(data.get("name", "Sound"))
+	preview.add_child(label)
+	set_drag_preview(preview)
+	modulate.a = 0.4
+	return {"type": DRAG_TYPE, "row": self}
+
+
+func _can_drop_data(_at_position: Vector2, drag: Variant) -> bool:
+	return can_accept_drag(drag)
+
+
+func _drop_data(_at_position: Vector2, drag: Variant) -> void:
+	var at := get_local_mouse_position()
+	var after := at.x > size.x / 2.0 if is_sfx() else at.y > size.y / 2.0
+	move_requested.emit(drag.row, self, after)
+
+
+## True when `drag` is another sound of the same kind (loop or SFX).
+func can_accept_drag(drag: Variant) -> bool:
+	return drag is Dictionary and drag.get("type") == DRAG_TYPE \
+			and is_instance_valid(drag.row) and drag.row.is_loop() == is_loop()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_DRAG_END:
+		modulate.a = 1.0
+
+
+## Lets drops land on a child control that would otherwise block them.
+func _forward_drop(control: Control) -> void:
+	control.set_drag_forwarding(Callable(), _can_drop_data, _drop_data)
 
 
 func _on_name_label_input(event: InputEvent) -> void:

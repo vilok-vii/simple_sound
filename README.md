@@ -5,27 +5,31 @@ just a laptop and a speaker.
 
 ## Features
 
-Most options are in **right-click menus**, and you can **double-click a name**
-to rename it (Enter saves, Esc cancels).
+Options are in the **"..." menus** in the top-right corner of each sound and
+next to "Projects". **Double-click a name** to rename it (Enter saves, Esc
+cancels), and **drag sounds** to change their order.
 
 - **Projects**: each show gets its own project (a folder) in the left sidebar.
-  Right-click a project to open, rename, export, open its folder or delete it.
-  Right-click the empty part of the list to create or import a project. The last
-  opened project reopens on start.
+  The "..." button next to "Projects" (or right-clicking a project) opens a
+  menu to create, open, rename, export, import, open the folder or delete.
+  The last opened project reopens on start.
 - **Loops**: background sounds that play on repeat as long as they are in the
-  workspace. Each has its own volume slider. Right-click to rename or remove.
-- **SFX**: each sound effect is a tile with a big play button and its name
-  below. Click to play once; a progress bar shows how far it is. Right-click
-  for Play, Stop, Set/Clear hotkey, Volume, Rename and Remove. For a hotkey,
-  choose "Set hotkey...", then press any key (modifiers like Ctrl/Shift work
-  too). Esc cancels, Backspace clears the key. The key shows in the tile's
-  corner.
+  workspace. Each has its own volume slider. "..." has Rename and Remove.
+- **SFX**: each sound effect is a tile with a big play button, its name, a
+  progress bar and a volume slider. Click to play; clicking again while it
+  plays layers another copy on top instead of restarting. "..." has Play,
+  Stop, Set/Clear hotkey, Rename and Remove. For a hotkey, choose
+  "Set hotkey...", then press any key (modifiers like Ctrl/Shift work too).
+  Esc cancels, Backspace clears the key. The key shows in the tile's corner.
+- **Reordering**: drag a loop or SFX tile and drop it where you want it.
+  Loops and SFX stay in their own column.
 - **Renaming** a sound also renames its copied file to match.
 - **Export / import**: "Export..." saves a project (settings and all its
   sounds) as one `.zip` file. Copy it to another computer running Simple Sound
   and use "Import..." to load it as a project there.
 - **Master volume** slider for the whole app.
-- **Stop all SFX**: press **Esc** (or the button) to stop every sound effect.
+- **Stop all SFX**: press **Esc** (or the button) to stop every sound effect,
+  including layered copies.
   Loops keep playing.
 - Supports **WAV, OGG (Vorbis) and MP3**. The app checks what is inside a file,
   not just its extension: files that are really M4A/AAC, Opus, FLAC or similar

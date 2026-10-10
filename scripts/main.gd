@@ -6,7 +6,15 @@ extends Control
 const PROJECTS_DIR := "user://projects"
 const SETTINGS_PATH := "user://settings.json"
 const PROJECT_FILE := "project.json"
-const AUDIO_EXTENSIONS := ["wav", "ogg", "mp3"]
+const PLAYABLE_FORMATS := ["wav", "ogg", "mp3"]
+const FORMAT_NAMES := {
+	"m4a": "an M4A/AAC file",
+	"webm": "a WebM file",
+	"flac": "a FLAC file",
+	"opus": "an Opus file",
+	"mp2": "an MP2 file",
+	"aiff": "an AIFF file",
+}
 const MODIFIER_KEYS := [KEY_SHIFT, KEY_CTRL, KEY_ALT, KEY_META]
 
 var settings := {"master_volume": 1.0, "last_project": ""}
@@ -264,15 +272,21 @@ func _add_files(paths: PackedStringArray, mode: String) -> void:
 		_set_status("Create or select a project before adding sounds.")
 		return
 	var added := 0
+	var problems: Array[String] = []
 	for src in paths:
-		if not src.get_extension().to_lower() in AUDIO_EXTENSIONS:
-			_set_status("Skipped \"%s\": only WAV, OGG and MP3 are supported." % src.get_file())
+		var format := _detect_format(src)
+		if not format in PLAYABLE_FORMATS:
+			problems.append(_unplayable_message(src.get_file(), format))
 			continue
 		var file_name := _unique_file_name(src.get_file())
-		var dst := ProjectSettings.globalize_path(_project_dir().path_join(file_name))
-		var err := DirAccess.copy_absolute(src, dst)
+		var dst := _project_dir().path_join(file_name)
+		var err := DirAccess.copy_absolute(src, ProjectSettings.globalize_path(dst))
 		if err != OK:
-			_set_status("Could not copy \"%s\" (error %d)." % [src.get_file(), err])
+			problems.append("Could not copy \"%s\" (error %d)." % [src.get_file(), err])
+			continue
+		if _load_stream(dst, false) == null:
+			DirAccess.remove_absolute(dst)
+			problems.append(_unplayable_message(src.get_file(), ""))
 			continue
 		var track := {
 			"file": file_name,
@@ -286,7 +300,51 @@ func _add_files(paths: PackedStringArray, mode: String) -> void:
 		added += 1
 	if added > 0:
 		_save_project()
-		_set_status("Added %d %s." % [added, "loop(s)" if mode == "loop" else "sound effect(s)"])
+		problems.push_front("Added %d %s." % [added, "loop(s)" if mode == "loop" else "sound effect(s)"])
+	_set_status("  ".join(problems))
+
+
+func _unplayable_message(file_name: String, format: String) -> String:
+	if format in FORMAT_NAMES:
+		return ("\"%s\" can't be played: it is really %s, which this app can't read. "
+				+ "Convert it to MP3, WAV or OGG (for example with Audacity) and add it again.") % [file_name, FORMAT_NAMES[format]]
+	return ("\"%s\" can't be played: it is not a WAV, OGG or MP3 file the app can read. "
+			+ "Convert it to MP3, WAV or OGG (for example with Audacity) and add it again.") % file_name
+
+
+## Works out the audio format from the file's contents, since downloaded files
+## often have the wrong extension (e.g. an M4A saved as .mp3).
+static func _detect_format(path: String) -> String:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return ""
+	var head := file.get_buffer(64)
+	if head.size() < 12:
+		return ""
+	var tag := head.slice(0, 4).get_string_from_ascii()
+	if tag == "RIFF" and head.slice(8, 12).get_string_from_ascii() == "WAVE":
+		return "wav"
+	if tag == "OggS":
+		return "opus" if head.slice(28, 36).get_string_from_ascii() == "OpusHead" else "ogg"
+	if tag == "fLaC":
+		return "flac"
+	if tag == "FORM":
+		return "aiff"
+	if head.slice(4, 8).get_string_from_ascii() == "ftyp":
+		return "m4a"
+	if head[0] == 0x1A and head[1] == 0x45 and head[2] == 0xDF and head[3] == 0xA3:
+		return "webm"
+	if head.slice(0, 3).get_string_from_ascii() == "ID3":
+		return "mp3"
+	if head[0] == 0xFF and (head[1] & 0xE0) == 0xE0:
+		match (head[1] >> 1) & 0x03:
+			0x01:
+				return "mp3"
+			0x02, 0x03:
+				return "mp2"
+			_:
+				return "m4a" # ADTS AAC stream
+	return ""
 
 
 func _unique_file_name(file_name: String) -> String:
@@ -346,7 +404,7 @@ static func _load_stream(path: String, loop: bool) -> AudioStream:
 	if not FileAccess.file_exists(path):
 		return null
 	path = ProjectSettings.globalize_path(path)
-	match path.get_extension().to_lower():
+	match _detect_format(path):
 		"wav":
 			var wav := AudioStreamWAV.load_from_file(path)
 			if wav and loop:
@@ -598,6 +656,7 @@ func _build_ui() -> void:
 
 	status_label = _make_label("", 16)
 	status_label.modulate = Color(1, 1, 1, 0.75)
+	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	main.add_child(status_label)
 
 	# Dialogs.

@@ -28,7 +28,7 @@ var pending_mode := "sfx"
 
 var project_list: ItemList
 var project_menu: PopupMenu
-var projects_menu_button: Button
+var projects_menu_button: DotsButton
 var menu_project := ""
 var export_project := ""
 var delete_project := ""
@@ -81,11 +81,6 @@ func _input(event: InputEvent) -> void:
 
 	# Don't fire sounds while typing a project name.
 	if get_viewport().gui_get_focus_owner() is LineEdit:
-		return
-
-	if key.keycode == KEY_ESCAPE:
-		_stop_all_sfx()
-		get_viewport().set_input_as_handled()
 		return
 
 	var code := key.get_keycode_with_modifiers()
@@ -201,7 +196,7 @@ func _on_project_list_empty_clicked(_at_position: Vector2, mouse_button: int) ->
 		_show_project_menu("")
 
 
-func _show_project_menu(project_name: String, from_button := false) -> void:
+func _show_project_menu(project_name: String) -> void:
 	menu_project = project_name
 	project_menu.clear()
 	if project_name != "":
@@ -216,8 +211,6 @@ func _show_project_menu(project_name: String, from_button := false) -> void:
 	project_menu.add_item("New project...", PROJECT_NEW)
 	project_menu.add_item("Import...", PROJECT_IMPORT)
 	var at := project_list.get_screen_position() + project_list.get_local_mouse_position()
-	if from_button:
-		at = projects_menu_button.get_screen_position() + Vector2(0, projects_menu_button.size.y)
 	project_menu.popup(Rect2i(Vector2i(at), Vector2i.ZERO))
 
 
@@ -421,6 +414,7 @@ func _create_row(track: Dictionary) -> void:
 	row.bind_requested.connect(_on_bind_requested)
 	row.rename_requested.connect(_on_rename_track)
 	row.move_requested.connect(_on_move_track)
+	row.convert_requested.connect(_on_convert_track)
 	rows.append(row)
 
 
@@ -446,12 +440,32 @@ func _on_move_track(row: TrackRow, target: TrackRow, after: bool) -> void:
 	if from == to:
 		return
 	list.move_child(row, to)
+	_sync_track_order()
+	_save_project()
+
+
+## Turns a loop into an SFX or the other way round; it goes to the end of the
+## other column and keeps its name, volume and hotkey.
+func _on_convert_track(row: TrackRow) -> void:
+	if binding_row == row:
+		binding_row = null
+	var track := row.data
+	track["mode"] = "sfx" if row.is_loop() else "loop"
+	row.stop()
+	rows.erase(row)
+	row.queue_free()
+	_create_row(track)
+	_sync_track_order()
+	_save_project()
+
+
+## Rebuilds `rows` and `tracks` in the order they are shown.
+func _sync_track_order() -> void:
 	rows.clear()
 	for child in loop_box.get_children() + sfx_box.get_children():
 		if child is TrackRow and not child.is_queued_for_deletion():
 			rows.append(child)
 	tracks = rows.map(func(r: TrackRow) -> Dictionary: return r.data)
-	_save_project()
 
 
 ## Drops in the gaps between sounds go next to the closest one.
@@ -665,10 +679,11 @@ func _build_ui() -> void:
 	var projects_title := _make_label("Projects", 22)
 	projects_title.size_flags_horizontal = SIZE_EXPAND_FILL
 	sidebar_header.add_child(projects_title)
-	var projects_button := _make_button("...", func() -> void: _show_project_menu(current_project, true))
-	projects_button.flat = true
-	sidebar_header.add_child(projects_button)
-	projects_menu_button = projects_button
+	projects_menu_button = DotsButton.new()
+	projects_menu_button.get_popup().add_item("New project...", PROJECT_NEW)
+	projects_menu_button.get_popup().add_item("Import...", PROJECT_IMPORT)
+	projects_menu_button.get_popup().id_pressed.connect(_on_project_menu_pressed)
+	sidebar_header.add_child(projects_menu_button)
 
 	project_list = ItemList.new()
 	project_list.size_flags_vertical = SIZE_EXPAND_FILL
@@ -714,7 +729,7 @@ func _build_ui() -> void:
 	master_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	top.add_child(master_label)
 
-	no_project_label = _make_label("Use the ... menu next to Projects to create a project.", 20)
+	no_project_label = _make_label("Use the menu next to Projects to create a project.", 20)
 	no_project_label.size_flags_vertical = SIZE_EXPAND_FILL
 	no_project_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	no_project_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -731,7 +746,7 @@ func _build_ui() -> void:
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = SIZE_EXPAND_FILL
 	actions.add_child(spacer)
-	actions.add_child(_make_button("Stop all SFX (Esc)", _stop_all_sfx))
+	actions.add_child(_make_button("Stop all SFX", _stop_all_sfx))
 
 	var columns := HBoxContainer.new()
 	columns.size_flags_vertical = SIZE_EXPAND_FILL

@@ -3,16 +3,17 @@ extends PanelContainer
 ## One sound in the workspace. A loop is a row with a volume slider that plays
 ## until removed. An SFX is a tile with a big play button that plays once;
 ## pressing it again layers another copy on top. Other options are in the
-## "..." menu, names are renamed by double-clicking, and rows are reordered
-## by dragging them.
+## dots menu (also on right-click), names are renamed by double-clicking, and
+## rows are reordered by dragging them.
 
 signal changed
 signal remove_requested(row: TrackRow)
 signal bind_requested(row: TrackRow)
 signal rename_requested(row: TrackRow, new_name: String)
 signal move_requested(row: TrackRow, target: TrackRow, after: bool)
+signal convert_requested(row: TrackRow)
 
-enum { MENU_PLAY, MENU_STOP, MENU_SET_KEY, MENU_CLEAR_KEY, MENU_RENAME, MENU_REMOVE }
+enum { MENU_PLAY, MENU_STOP, MENU_SET_KEY, MENU_CLEAR_KEY, MENU_RENAME, MENU_CONVERT, MENU_REMOVE }
 
 const DRAG_TYPE := "simple_sound_track"
 ## How many copies of one SFX can play on top of each other.
@@ -32,7 +33,7 @@ var player := AudioStreamPlayer.new()
 var _style := StyleBoxFlat.new()
 var _name_label: Label
 var _name_edit: LineEdit
-var _menu_button := MenuButton.new()
+var _menu_button := DotsButton.new()
 var _menu: PopupMenu
 var _play_button: PlayButton
 var _progress: ProgressBar
@@ -93,6 +94,7 @@ func setup(track: Dictionary, stream: AudioStream) -> void:
 		_build_tile()
 	else:
 		_build_loop_row()
+	gui_input.connect(_on_gui_input)
 
 	if is_loop() and stream:
 		player.play()
@@ -125,6 +127,7 @@ func _build_volume_controls() -> void:
 	_volume_slider.size_flags_vertical = SIZE_SHRINK_CENTER
 	_volume_slider.focus_mode = Control.FOCUS_NONE
 	_volume_slider.value_changed.connect(_on_volume_changed)
+	_volume_slider.gui_input.connect(_on_gui_input)
 	_forward_drop(_volume_slider)
 
 	_volume_label = Label.new()
@@ -135,9 +138,6 @@ func _build_volume_controls() -> void:
 
 
 func _build_menu() -> void:
-	_menu_button.text = "..."
-	_menu_button.flat = true
-	_menu_button.focus_mode = Control.FOCUS_NONE
 	_forward_drop(_menu_button)
 	_menu = _menu_button.get_popup()
 	if is_sfx():
@@ -148,6 +148,8 @@ func _build_menu() -> void:
 		_menu.add_item("Clear hotkey", MENU_CLEAR_KEY)
 		_menu.add_separator()
 	_menu.add_item("Rename", MENU_RENAME)
+	_menu.add_item("Convert to SFX" if is_loop() else "Convert to loop", MENU_CONVERT)
+	_menu.add_separator()
 	_menu.add_item("Remove", MENU_REMOVE)
 	_menu.id_pressed.connect(_on_menu_pressed)
 	_menu.about_to_popup.connect(_update_menu)
@@ -190,13 +192,18 @@ func _build_tile() -> void:
 	_play_button.focus_mode = Control.FOCUS_NONE
 	_play_button.disabled = player.stream == null
 	_play_button.pressed.connect(play)
+	_play_button.gui_input.connect(_on_gui_input)
 	_play_button.set_drag_forwarding(_get_drag_data, _can_drop_data, _drop_data)
 	box.add_child(_play_button)
 	_update_key_text()
 
 	# The "..." menu sits in the top-right corner of the play button.
 	_play_button.add_child(_menu_button)
-	_menu_button.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT)
+	_menu_button.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_menu_button.offset_left = -DotsButton.SIZE.x - 4
+	_menu_button.offset_right = -4
+	_menu_button.offset_top = 4
+	_menu_button.offset_bottom = 4 + DotsButton.SIZE.y
 
 	_name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -309,8 +316,18 @@ func _on_menu_pressed(id: int) -> void:
 			set_hotkey(0)
 		MENU_RENAME:
 			start_rename()
+		MENU_CONVERT:
+			convert_requested.emit(self)
 		MENU_REMOVE:
 			remove_requested.emit(self)
+
+
+## Right-click anywhere on the sound opens the same menu as the dots button.
+func _on_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
+		_update_menu()
+		_menu.popup(Rect2i(Vector2i(get_screen_position() + get_local_mouse_position()), Vector2i.ZERO))
+		get_viewport().set_input_as_handled()
 
 
 # --- Drag and drop to reorder ---------------------------------------------------

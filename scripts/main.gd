@@ -27,6 +27,8 @@ var sfx_box: VBoxContainer
 var status_label: Label
 var file_dialog: FileDialog
 var delete_dialog: ConfirmationDialog
+var export_dialog: FileDialog
+var import_dialog: FileDialog
 
 
 func _ready() -> void:
@@ -307,6 +309,7 @@ func _create_row(track: Dictionary) -> void:
 	row.changed.connect(_save_project)
 	row.remove_requested.connect(_on_remove_track)
 	row.bind_requested.connect(_on_bind_requested)
+	row.rename_requested.connect(_on_rename_track)
 	rows.append(row)
 
 
@@ -320,6 +323,23 @@ func _on_remove_track(row: TrackRow) -> void:
 	row.queue_free()
 	_save_project()
 	_set_status("Removed \"%s\"." % row.data.get("name", ""))
+
+
+func _on_rename_track(row: TrackRow, new_name: String) -> void:
+	var old_file := str(row.data.get("file", ""))
+	var ext := old_file.get_extension()
+	var new_file := (new_name.validate_filename() + "." + ext) if ext != "" else new_name.validate_filename()
+	if new_file != old_file:
+		new_file = _unique_file_name(new_file)
+		var err := DirAccess.rename_absolute(_project_dir().path_join(old_file), _project_dir().path_join(new_file))
+		if err == OK:
+			row.data["file"] = new_file
+		else:
+			_set_status("Renamed the sound, but could not rename its file (error %d)." % err)
+	row.data["name"] = new_name
+	row.update_name()
+	_save_project()
+	_set_status("Renamed sound to \"%s\"." % new_name)
 
 
 static func _load_stream(path: String, loop: bool) -> AudioStream:
@@ -345,6 +365,75 @@ static func _load_stream(path: String, loop: bool) -> AudioStream:
 				mp3.loop = loop
 			return mp3
 	return null
+
+
+# --- Export / import ----------------------------------------------------------
+
+func _on_export_project() -> void:
+	if current_project == "":
+		_set_status("Select a project to export.")
+		return
+	export_dialog.current_file = current_project + ".zip"
+	export_dialog.popup_centered_ratio(0.7)
+
+
+func _on_export_path_selected(path: String) -> void:
+	if path.get_extension().to_lower() != "zip":
+		path += ".zip"
+	var zip := ZIPPacker.new()
+	var err := zip.open(path)
+	if err != OK:
+		_set_status("Could not create \"%s\" (error %d)." % [path.get_file(), err])
+		return
+	var files := [PROJECT_FILE]
+	for track in tracks:
+		var file_name := str(track.get("file", ""))
+		if file_name != "" and FileAccess.file_exists(_project_dir().path_join(file_name)):
+			files.append(file_name)
+	for file_name in files:
+		zip.start_file(file_name)
+		zip.write_file(FileAccess.get_file_as_bytes(_project_dir().path_join(file_name)))
+		zip.close_file()
+	zip.close()
+	_set_status("Exported \"%s\" with %d sound(s) to %s" % [current_project, files.size() - 1, path])
+
+
+func _on_import_project() -> void:
+	import_dialog.popup_centered_ratio(0.7)
+
+
+func _on_import_path_selected(path: String) -> void:
+	var zip := ZIPReader.new()
+	if zip.open(path) != OK:
+		_set_status("Could not open \"%s\"." % path.get_file())
+		return
+	var entries := zip.get_files()
+	if not PROJECT_FILE in entries:
+		zip.close()
+		_set_status("\"%s\" is not a Simple Sound export (no %s inside)." % [path.get_file(), PROJECT_FILE])
+		return
+
+	var base_name := _clean_name(path.get_file().get_basename())
+	if base_name == "":
+		base_name = "Imported project"
+	var project_name := base_name
+	var n := 2
+	while DirAccess.dir_exists_absolute(_project_dir(project_name)):
+		project_name = "%s (%d)" % [base_name, n]
+		n += 1
+
+	var dir := _project_dir(project_name)
+	DirAccess.make_dir_recursive_absolute(dir)
+	for entry in entries:
+		# Only take plain files from the top of the zip; ignore folders and odd paths.
+		if entry.ends_with("/") or entry.get_file() != entry or entry.validate_filename() != entry:
+			continue
+		var file := FileAccess.open(dir.path_join(entry), FileAccess.WRITE)
+		if file:
+			file.store_buffer(zip.read_file(entry))
+	zip.close()
+	_open_project(project_name)
+	_set_status("Imported \"%s\"." % project_name)
 
 
 # --- Master volume & settings -------------------------------------------------
@@ -443,6 +532,12 @@ func _build_ui() -> void:
 		var button := _make_button(entry[0], entry[1])
 		button.size_flags_horizontal = SIZE_EXPAND_FILL
 		project_buttons.add_child(button)
+	var share_buttons := HBoxContainer.new()
+	sidebar.add_child(share_buttons)
+	for entry in [["Export...", _on_export_project], ["Import...", _on_import_project]]:
+		var button := _make_button(entry[0], entry[1])
+		button.size_flags_horizontal = SIZE_EXPAND_FILL
+		share_buttons.add_child(button)
 	sidebar.add_child(_make_button("Open folder", _on_open_folder))
 
 	# Main area.
@@ -519,6 +614,24 @@ func _build_ui() -> void:
 	delete_dialog.ok_button_text = "Delete"
 	delete_dialog.confirmed.connect(_on_delete_confirmed)
 	add_child(delete_dialog)
+
+	export_dialog = FileDialog.new()
+	export_dialog.title = "Export project"
+	export_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
+	export_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	export_dialog.filters = PackedStringArray(["*.zip ; Simple Sound export"])
+	export_dialog.use_native_dialog = true
+	export_dialog.file_selected.connect(_on_export_path_selected)
+	add_child(export_dialog)
+
+	import_dialog = FileDialog.new()
+	import_dialog.title = "Import project"
+	import_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+	import_dialog.access = FileDialog.ACCESS_FILESYSTEM
+	import_dialog.filters = PackedStringArray(["*.zip ; Simple Sound export"])
+	import_dialog.use_native_dialog = true
+	import_dialog.file_selected.connect(_on_import_path_selected)
+	add_child(import_dialog)
 
 
 func _make_column(parent: Control, title: String) -> VBoxContainer:

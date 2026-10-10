@@ -12,6 +12,11 @@ just a laptop and a speaker.
 - **SFX**: one-shot sounds with Play/Stop buttons, a volume slider, a progress
   bar and an optional **hotkey**. Click "Set key", then press any key
   (modifiers like Ctrl/Shift work too). Esc cancels, Backspace clears the key.
+- **Rename sounds**: click "Rename" (or double-click a sound's name), type the
+  new name and press Enter. Esc cancels. The copied file is renamed to match.
+- **Export / import**: "Export..." saves the current project (settings and all
+  its sounds) as one `.zip` file. Copy it to another computer running Simple
+  Sound and use "Import..." to load it as a project there.
 - **Master volume** slider for the whole app.
 - **Stop all SFX**: press **Esc** (or the button) to stop every sound effect.
   Loops keep playing.

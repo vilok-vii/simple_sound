@@ -6,6 +6,7 @@ extends PanelContainer
 signal changed
 signal remove_requested(row: TrackRow)
 signal bind_requested(row: TrackRow)
+signal rename_requested(row: TrackRow, new_name: String)
 
 const LOOP_COLOR := Color(0.16, 0.22, 0.30)
 const SFX_COLOR := Color(0.20, 0.20, 0.24)
@@ -16,6 +17,8 @@ var data: Dictionary
 var player := AudioStreamPlayer.new()
 
 var _style := StyleBoxFlat.new()
+var _name_label: Label
+var _name_edit: LineEdit
 var _volume_label: Label
 var _key_button: Button
 var _progress: ProgressBar
@@ -45,17 +48,24 @@ func setup(track: Dictionary, stream: AudioStream) -> void:
 	var top := HBoxContainer.new()
 	box.add_child(top)
 
-	var name_label := Label.new()
-	name_label.text = str(data.get("name", "Sound"))
-	name_label.size_flags_horizontal = SIZE_EXPAND_FILL
-	name_label.clip_text = true
-	name_label.tooltip_text = str(data.get("file", ""))
-	name_label.mouse_filter = Control.MOUSE_FILTER_PASS
-	top.add_child(name_label)
+	_name_label = Label.new()
+	_name_label.size_flags_horizontal = SIZE_EXPAND_FILL
+	_name_label.clip_text = true
+	_name_label.mouse_filter = Control.MOUSE_FILTER_PASS
+	_name_label.gui_input.connect(_on_name_label_input)
+	top.add_child(_name_label)
+	update_name()
+
+	_name_edit = LineEdit.new()
+	_name_edit.size_flags_horizontal = SIZE_EXPAND_FILL
+	_name_edit.visible = false
+	_name_edit.text_submitted.connect(func(_text: String) -> void: _finish_rename(true))
+	_name_edit.focus_exited.connect(func() -> void: _finish_rename(true))
+	_name_edit.gui_input.connect(_on_name_edit_input)
+	top.add_child(_name_edit)
 
 	if stream == null:
-		name_label.text += "  (missing or unreadable file)"
-		name_label.add_theme_color_override("font_color", Color(1.0, 0.45, 0.45))
+		_name_label.add_theme_color_override("font_color", Color(1.0, 0.45, 0.45))
 
 	if is_sfx():
 		_key_button = _make_button("", func() -> void: bind_requested.emit(self))
@@ -69,6 +79,10 @@ func setup(track: Dictionary, stream: AudioStream) -> void:
 		looping.text = "Looping" if stream else ""
 		looping.add_theme_color_override("font_color", PLAYING_BORDER)
 		top.add_child(looping)
+
+	var rename := _make_button("Rename", start_rename)
+	rename.tooltip_text = "Rename this sound (or double-click its name)"
+	top.add_child(rename)
 
 	var remove := _make_button("Remove", func() -> void: remove_requested.emit(self))
 	remove.tooltip_text = "Remove this sound from the project"
@@ -141,6 +155,42 @@ func set_hotkey(code: int) -> void:
 	data["key"] = code
 	_update_key_button()
 	changed.emit()
+
+
+func update_name() -> void:
+	_name_label.text = str(data.get("name", "Sound"))
+	_name_label.tooltip_text = str(data.get("file", ""))
+	if player.stream == null:
+		_name_label.text += "  (missing or unreadable file)"
+
+
+func start_rename() -> void:
+	_name_edit.text = str(data.get("name", ""))
+	_name_label.visible = false
+	_name_edit.visible = true
+	_name_edit.grab_focus()
+	_name_edit.select_all()
+
+
+func _finish_rename(accept: bool) -> void:
+	if not _name_edit.visible:
+		return
+	_name_edit.visible = false
+	_name_label.visible = true
+	var new_name := _name_edit.text.strip_edges()
+	if accept and new_name != "" and new_name != str(data.get("name", "")):
+		rename_requested.emit(self, new_name)
+
+
+func _on_name_label_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.double_click and event.button_index == MOUSE_BUTTON_LEFT:
+		start_rename()
+
+
+func _on_name_edit_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+		_finish_rename(false)
+		_name_edit.accept_event()
 
 
 func set_binding_mode(active: bool) -> void:

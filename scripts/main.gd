@@ -17,6 +17,9 @@ const FORMAT_NAMES := {
 }
 enum { PROJECT_OPEN, PROJECT_RENAME, PROJECT_EXPORT, PROJECT_FOLDER, PROJECT_DELETE, PROJECT_NEW, PROJECT_IMPORT }
 
+## The master slider goes up to 300% so quiet files can be boosted.
+const MASTER_MAX := 3.0
+
 const MODIFIER_KEYS := [KEY_SHIFT, KEY_CTRL, KEY_ALT, KEY_META]
 
 var settings := {"master_volume": 1.0, "last_project": ""}
@@ -37,6 +40,7 @@ var name_dialog_edit: LineEdit
 var name_dialog_target := ""
 var project_title: Label
 var master_label: Label
+var master_amp := AudioEffectAmplify.new()
 var workspace: VBoxContainer
 var no_project_label: Label
 var loop_box: VBoxContainer
@@ -52,7 +56,13 @@ func _ready() -> void:
 	DirAccess.make_dir_recursive_absolute(PROJECTS_DIR)
 	_load_settings()
 	_build_ui()
-	AudioServer.set_bus_volume_db(0, TrackRow.volume_to_db(float(settings.master_volume)))
+	# The master volume is an amplifier followed by a limiter. Boosting above
+	# 100% can push the mix past full scale; the limiter keeps loud peaks from
+	# turning into harsh digital clipping. (The bus volume itself is applied
+	# after the effects, so it can't be used for the boost.)
+	AudioServer.add_bus_effect(0, master_amp)
+	AudioServer.add_bus_effect(0, AudioEffectHardLimiter.new())
+	_apply_master_volume(float(settings.master_volume))
 	get_window().files_dropped.connect(_on_files_dropped)
 
 	var names := _get_project_names()
@@ -600,9 +610,13 @@ func _on_import_path_selected(path: String) -> void:
 
 func _on_master_changed(value: float) -> void:
 	settings.master_volume = value
-	AudioServer.set_bus_volume_db(0, TrackRow.volume_to_db(value))
+	_apply_master_volume(value)
 	master_label.text = "%d%%" % roundi(value * 100.0)
 	_save_settings()
+
+
+func _apply_master_volume(value: float) -> void:
+	master_amp.volume_db = TrackRow.volume_to_db(value)
 
 
 func _load_settings() -> void:
@@ -715,9 +729,9 @@ func _build_ui() -> void:
 
 	var master_slider := HSlider.new()
 	master_slider.min_value = 0.0
-	master_slider.max_value = 1.0
+	master_slider.max_value = MASTER_MAX
 	master_slider.step = 0.01
-	master_slider.custom_minimum_size.x = 300
+	master_slider.custom_minimum_size.x = 360
 	master_slider.size_flags_vertical = SIZE_SHRINK_CENTER
 	master_slider.focus_mode = FOCUS_NONE
 	master_slider.value = float(settings.master_volume)
@@ -725,7 +739,7 @@ func _build_ui() -> void:
 	top.add_child(master_slider)
 
 	master_label = _make_label("%d%%" % roundi(float(settings.master_volume) * 100.0), 20)
-	master_label.custom_minimum_size.x = 64
+	master_label.custom_minimum_size.x = 72
 	master_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	top.add_child(master_label)
 

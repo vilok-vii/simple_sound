@@ -30,7 +30,9 @@ their order.
 - **Export / import**: "Export..." saves a project (settings and all its
   sounds) as one `.zip` file. Copy it to another computer running Simple Sound
   and use "Import..." to load it as a project there.
-- **Master volume** slider for the whole app.
+- **Master volume** slider for the whole app, from 0% to 300%. Above 100% it
+  boosts quiet files; a limiter on the output keeps loud peaks from clipping
+  into crackle.
 - **Stop all SFX** button stops every sound effect, including layered copies.
   Loops keep playing.
 - Supports **WAV, OGG (Vorbis) and MP3**. The app checks what is inside a file,
